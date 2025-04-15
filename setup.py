@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="cloud_unzip",
-    version="0.1.0",
+    version="0.1.1",
     author="rhythmcache",
     description="python script to extract files from remote ZIP archives without downloading the entire archive",
     long_description=long_description,
