@@ -50,7 +50,7 @@ cloud_unzip -e path/to/file1,path/to/file2,path/to/file3 <url>
 ### Use as module
 
 - Example
-- 
+
 ```python
 from cloud_unzip import RemoteZipExtractor
 
