@@ -44,4 +44,24 @@ cloud_unzip -e path/to/file1,path/to/file2,path/to/file3 <url>
 
 ### Limitations 
 - Server must support range request
-- only `Deflate` and `Store` methods are currently supported 
+- only `Deflate` and `Store` methods are currently supported
+
+
+### Use as module
+
+- Example
+- 
+```python
+from cloud_unzip import RemoteZipExtractor
+
+url = "https://example.com/yourfile.zip"
+extractor = RemoteZipExtractor(url)
+
+# List files in the ZIP archive
+files = extractor.list_files()
+print("Files in zip:", files)
+
+# Extract a specific file
+extracted_path = extractor.extract_file("docs/readme.txt", output_path="readme.txt")
+print(f"Extracted to: {extracted_path}")
+```
