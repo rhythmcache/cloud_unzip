@@ -5,7 +5,7 @@ python script to extract files from remote ZIP archives without downloading the 
 ## Installation
 
 ```
-pip install cloud_unzip
+pip install git+https://github.com/rhythmcache/cloud_unzip
 ```
 
 
