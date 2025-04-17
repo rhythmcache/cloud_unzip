@@ -13,7 +13,9 @@ setup(
     url="https://github.com/rhythmcache/cloud_unzip",
     packages=find_packages(),
     install_requires=[
-        'httpx',
+        'fsspec',
+        'aiohttp',
+        'requests',
     ],
     python_requires=">=3.7",
     classifiers=[
