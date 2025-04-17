@@ -44,7 +44,9 @@ cloud_unzip -e path/to/file1,path/to/file2,path/to/file3 <url>
 
 ### Limitations 
 - Server must support range request
+<!--
 - only `Deflate` and `Store` methods are currently supported
+-->
 
 
 ### Use as module
