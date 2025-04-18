@@ -5,7 +5,19 @@ import sys
 import concurrent.futures
 from typing import List, Optional, Union, BinaryIO
 
-def print_zip_tree(files):
+def format_size(size_in_bytes):
+    units = ['B', 'KB', 'MB', 'GB', 'TB']
+    size = float(size_in_bytes)
+    unit_index = 0
+    while size >= 1024 and unit_index < len(units) - 1:
+        size /= 1024
+        unit_index += 1
+    if unit_index == 0:
+        return f"{int(size)} {units[unit_index]}"
+    else:
+        return f"{size:.2f} {units[unit_index]}"
+
+def print_zip_tree(files, zipfile_obj):
     structure = {}
 
     for file_path in files:
@@ -14,12 +26,19 @@ def print_zip_tree(files):
         for part in parts:
             current_level = current_level.setdefault(part, {})
 
-    def print_nested(d, prefix=""):
+    def print_nested(d, prefix="", path=""):
         keys = sorted(d.keys())
         for i, key in enumerate(keys):
             connector = "└── " if i == len(keys) - 1 else "├── "
-            print(prefix + connector + key)
-            print_nested(d[key], prefix + ("    " if connector == "└── " else "│   "))
+            full_path = path + "/" + key if path else key
+            if not d[key]:
+                info = zipfile_obj.getinfo(full_path)
+                size_str = format_size(info.file_size)
+                print(f"{prefix}{connector}{key} ({size_str})")
+            else:
+                print(f"{prefix}{connector}{key}")
+                
+            print_nested(d[key], prefix + ("    " if connector == "└── " else "│   "), full_path)
 
     print_nested(structure)
     print(f"\nTotal files: {len(files)}")
@@ -47,13 +66,11 @@ class RemoteZipExtractor:
         
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         
-        
         with self.fs.open(self.url) as remote_file:
             with zipfile.ZipFile(remote_file) as zf:
                 
                 info = zf.getinfo(filename)
                 total_size = info.file_size
-                
                 
                 with zf.open(filename) as source, open(output_path, 'wb') as target:
                     chunk_size = 10 * 1024 * 1024
@@ -66,8 +83,9 @@ class RemoteZipExtractor:
                         target.write(chunk)
                         
                         progress = min(100, int(bytes_read * 100 / total_size))
-                        print(f"\rExtracting '{filename}': {bytes_read}/{total_size} bytes ({progress}%)", end="", file=sys.stderr)
-                
+                        readable_bytes = format_size(bytes_read)
+                        readable_total = format_size(total_size)
+                        print(f"\rExtracting '{filename}': {readable_bytes}/{readable_total} ({progress}%)", end="", file=sys.stderr)
                 
                 print(file=sys.stderr)
         
@@ -120,7 +138,6 @@ def extract_file_from_remote_zip(url: str, filename: str, output_path: Optional[
                 
                 os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
                 
-                
                 info = zf.getinfo(filename)
                 total_size = info.file_size
                 
@@ -135,8 +152,9 @@ def extract_file_from_remote_zip(url: str, filename: str, output_path: Optional[
                         target.write(chunk)
                         
                         progress = min(100, int(bytes_read * 100 / total_size))
-                        print(f"\rExtracting '{filename}': {bytes_read}/{total_size} bytes ({progress}%)", end="", file=sys.stderr)
-                
+                        readable_bytes = format_size(bytes_read)
+                        readable_total = format_size(total_size)
+                        print(f"\rExtracting '{filename}': {readable_bytes}/{readable_total} ({progress}%)", end="", file=sys.stderr)
                 
                 print(file=sys.stderr)
                 
@@ -159,12 +177,13 @@ def main():
     if args.list or args.tree:
         files = extractor.list_files()
         if args.tree:
-            print_zip_tree(files)
+            print_zip_tree(files, extractor.zipfile)
         else:
             print(f"Files in the ZIP archive ({len(files)}):", file=sys.stderr)
             for file in files:
                 file_info = extractor.zipfile.getinfo(file)
-                print(f"  {file} ({file_info.file_size} bytes)", file=sys.stderr)
+                size_str = format_size(file_info.file_size)
+                print(f"  {file} ({size_str})", file=sys.stderr)
 
     if args.extract:
         files_to_extract = [f.strip() for f in args.extract.split(',')]
