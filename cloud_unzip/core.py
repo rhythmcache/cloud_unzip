@@ -20,11 +20,16 @@ def format_size(size_in_bytes):
 
 def print_zip_tree(files, zipfile_obj):
     structure = {}
+    folder_count = 0
 
     for file_path in files:
         parts = file_path.split('/')
         current_level = structure
-        for part in parts:
+        
+        for i, part in enumerate(parts):
+            if i < len(parts) - 1:
+                if part not in current_level:
+                    folder_count += 1
             current_level = current_level.setdefault(part, {})
 
     def print_nested(d, prefix="", path=""):
@@ -32,17 +37,14 @@ def print_zip_tree(files, zipfile_obj):
         for i, key in enumerate(keys):
             connector = "└── " if i == len(keys) - 1 else "├── "
             full_path = path + "/" + key if path else key
-            if not d[key]:
-                info = zipfile_obj.getinfo(full_path)
-                size_str = format_size(info.file_size)
-                print(f"{prefix}{connector}{key} ({size_str})")
-            else:
-                print(f"{prefix}{connector}{key}")
-                
+            
+            print(f"{prefix}{connector}{key}")
+            
             print_nested(d[key], prefix + ("    " if connector == "└── " else "│   "), full_path)
 
     print_nested(structure)
     print(f"\nTotal files: {len(files)}")
+    print(f"Total folders: {folder_count}")
 
 def get_password(provided_password=None):
     """Get password from argument or prompt user if needed"""
