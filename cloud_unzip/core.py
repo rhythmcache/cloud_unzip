@@ -3,6 +3,7 @@ import fsspec
 import os
 import sys
 import concurrent.futures
+import getpass
 from typing import List, Optional, Union, BinaryIO
 
 def format_size(size_in_bytes):
@@ -43,17 +44,62 @@ def print_zip_tree(files, zipfile_obj):
     print_nested(structure)
     print(f"\nTotal files: {len(files)}")
 
+def get_password(provided_password=None):
+    """Get password from argument or prompt user if needed"""
+    if provided_password:
+        return provided_password
+    return getpass.getpass("Enter ZIP password: ")
+
 class RemoteZipExtractor:
-    def __init__(self, url: str):
+    def __init__(self, url: str, password: Optional[str] = None):
         self.url = url
         self.fs = fsspec.filesystem("http")
         self.zipfile = None
+        self.password = password
         self._load_zipfile()
     
     def _load_zipfile(self):
         """Open the remote ZIP file using fsspec."""
+        try:
+            with self.fs.open(self.url) as remote_file:
+                try:
+                    self.zipfile = zipfile.ZipFile(remote_file)
+                    self._check_if_encrypted()
+                except (zipfile.BadZipFile, RuntimeError) as e:
+                    if "encrypted" in str(e).lower() or "password required" in str(e).lower():
+                        self._reopen_with_password()
+                    else:
+                        raise
+        except Exception as e:
+            print(f"Error opening ZIP file: {str(e)}", file=sys.stderr)
+            raise
+    
+    def _check_if_encrypted(self):
+        """Check if the ZIP file is encrypted and get password if needed."""
+        try:
+            test_file = self.zipfile.namelist()[0]
+            self.zipfile.open(test_file)
+        except RuntimeError as e:
+            if "password required" in str(e).lower() or "encrypted" in str(e).lower():
+                self._reopen_with_password()
+    
+    def _reopen_with_password(self):
+        """Reopen the ZIP file with a password."""
+        if not self.password:
+            self.password = get_password()
+        
         with self.fs.open(self.url) as remote_file:
-            self.zipfile = zipfile.ZipFile(remote_file)
+            try:
+                self.zipfile = zipfile.ZipFile(remote_file)
+                test_file = self.zipfile.namelist()[0]
+                self.zipfile.open(test_file, pwd=self.password.encode('utf-8') if self.password else None)
+            except (zipfile.BadZipFile, RuntimeError) as e:
+                if "incorrect password" in str(e).lower() or "bad password" in str(e).lower():
+                    print("Incorrect password. Please try again.", file=sys.stderr)
+                    self.password = get_password()
+                    self._reopen_with_password()
+                else:
+                    raise
     
     def list_files(self) -> List[str]:
         """List all files in the ZIP archive."""
@@ -72,22 +118,30 @@ class RemoteZipExtractor:
                 info = zf.getinfo(filename)
                 total_size = info.file_size
                 
-                with zf.open(filename) as source, open(output_path, 'wb') as target:
-                    chunk_size = 10 * 1024 * 1024
-                    bytes_read = 0
-                    while True:
-                        chunk = source.read(chunk_size)
-                        if not chunk:
-                            break
-                        bytes_read += len(chunk)
-                        target.write(chunk)
-                        
-                        progress = min(100, int(bytes_read * 100 / total_size))
-                        readable_bytes = format_size(bytes_read)
-                        readable_total = format_size(total_size)
-                        print(f"\rExtracting '{filename}': {readable_bytes}/{readable_total} ({progress}%)", end="", file=sys.stderr)
-                
-                print(file=sys.stderr)
+                try:
+                    with zf.open(filename, pwd=self.password.encode('utf-8') if self.password else None) as source, open(output_path, 'wb') as target:
+                        chunk_size = 10 * 1024 * 1024
+                        bytes_read = 0
+                        while True:
+                            chunk = source.read(chunk_size)
+                            if not chunk:
+                                break
+                            bytes_read += len(chunk)
+                            target.write(chunk)
+                            
+                            progress = min(100, int(bytes_read * 100 / total_size))
+                            readable_bytes = format_size(bytes_read)
+                            readable_total = format_size(total_size)
+                            print(f"\rExtracting '{filename}': {readable_bytes}/{readable_total} ({progress}%)", end="", file=sys.stderr)
+                    
+                    print(file=sys.stderr)
+                except RuntimeError as e:
+                    if "password required" in str(e).lower() or "bad password" in str(e).lower():
+                        print(f"\nThe file '{filename}' requires a password.", file=sys.stderr)
+                        self.password = get_password(self.password)
+                        return self.extract_file(filename, output_path)
+                    else:
+                        raise
         
         return output_path
     
@@ -123,42 +177,50 @@ class RemoteZipExtractor:
         
         return output_paths
 
-def extract_file_from_remote_zip(url: str, filename: str, output_path: Optional[str] = None, to_stdout: bool = False) -> Union[str, bytes]:
+def extract_file_from_remote_zip(url: str, filename: str, output_path: Optional[str] = None, to_stdout: bool = False, password: Optional[str] = None) -> Union[str, bytes]:
     """Standalone function to extract a file from a remote ZIP archive."""
     fs = fsspec.filesystem("http")
+    pwd_bytes = password.encode('utf-8') if password else None
     
     with fs.open(url) as remote_file:
         with zipfile.ZipFile(remote_file) as zf:
-            if to_stdout:
-                with zf.open(filename) as f:
-                    return f.read()
-            else:
-                if output_path is None:
-                    output_path = os.path.basename(filename)
-                
-                os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-                
-                info = zf.getinfo(filename)
-                total_size = info.file_size
-                
-                with zf.open(filename) as source, open(output_path, 'wb') as target:
-                    chunk_size = 10 * 1024 * 1024
-                    bytes_read = 0
-                    while True:
-                        chunk = source.read(chunk_size)
-                        if not chunk:
-                            break
-                        bytes_read += len(chunk)
-                        target.write(chunk)
-                        
-                        progress = min(100, int(bytes_read * 100 / total_size))
-                        readable_bytes = format_size(bytes_read)
-                        readable_total = format_size(total_size)
-                        print(f"\rExtracting '{filename}': {readable_bytes}/{readable_total} ({progress}%)", end="", file=sys.stderr)
-                
-                print(file=sys.stderr)
-                
-                return output_path
+            try:
+                if to_stdout:
+                    with zf.open(filename, pwd=pwd_bytes) as f:
+                        return f.read()
+                else:
+                    if output_path is None:
+                        output_path = os.path.basename(filename)
+                    
+                    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                    
+                    info = zf.getinfo(filename)
+                    total_size = info.file_size
+                    
+                    with zf.open(filename, pwd=pwd_bytes) as source, open(output_path, 'wb') as target:
+                        chunk_size = 10 * 1024 * 1024
+                        bytes_read = 0
+                        while True:
+                            chunk = source.read(chunk_size)
+                            if not chunk:
+                                break
+                            bytes_read += len(chunk)
+                            target.write(chunk)
+                            
+                            progress = min(100, int(bytes_read * 100 / total_size))
+                            readable_bytes = format_size(bytes_read)
+                            readable_total = format_size(total_size)
+                            print(f"\rExtracting '{filename}': {readable_bytes}/{readable_total} ({progress}%)", end="", file=sys.stderr)
+                    
+                    print(file=sys.stderr)
+                    
+                    return output_path
+            except RuntimeError as e:
+                if "password required" in str(e).lower() or "bad password" in str(e).lower():
+                    actual_password = get_password(password)
+                    return extract_file_from_remote_zip(url, filename, output_path, to_stdout, actual_password)
+                else:
+                    raise
 
 def main():
     import argparse
@@ -170,9 +232,10 @@ def main():
     parser.add_argument('-o', '--output', help='Output directory for extracted files. Use "-" to write to stdout')
     parser.add_argument('-p', '--parallel', action='store_true', help='Extract files in parallel')
     parser.add_argument('-w', '--workers', type=int, default=None, help='Maximum number of worker threads for parallel extraction')
+    parser.add_argument('--password', help='Password for encrypted ZIP files')
     args = parser.parse_args()
 
-    extractor = RemoteZipExtractor(args.url)
+    extractor = RemoteZipExtractor(args.url, password=args.password)
 
     if args.list or args.tree:
         files = extractor.list_files()
@@ -192,7 +255,7 @@ def main():
             if len(files_to_extract) > 1:
                 print("Error: Cannot write multiple files to stdout", file=sys.stderr)
                 sys.exit(1)
-            file_data = extract_file_from_remote_zip(args.url, files_to_extract[0], to_stdout=True)
+            file_data = extract_file_from_remote_zip(args.url, files_to_extract[0], to_stdout=True, password=args.password)
             sys.stdout.buffer.write(file_data)
         else:
             output_dir = args.output if args.output else '.'
@@ -205,7 +268,7 @@ def main():
                     output_path = os.path.join(output_dir, filename)
                     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
                     print(f"Extracting '{filename}' to '{output_path}'...", file=sys.stderr)
-                    extract_file_from_remote_zip(args.url, filename, output_path)
+                    extract_file_from_remote_zip(args.url, filename, output_path, password=args.password)
                     print(f"Successfully extracted '{filename}'", file=sys.stderr)
 
 if __name__ == "__main__":
