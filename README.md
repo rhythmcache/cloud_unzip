@@ -2,6 +2,7 @@
 python script to extract files from remote ZIP archives without downloading the entire archive
 
 
+
 ## Installation
 
 ```
@@ -12,7 +13,7 @@ pip install git+https://github.com/rhythmcache/cloud_unzip
 ### Usage
 
 ```
-usage: cloud_unzip [-h] [-l] [-t] [-e EXTRACT] [-o OUTPUT] [-p] [-w WORKERS] url
+usage: cloud_unzip [-h] [-l] [-t] [-e EXTRACT] [-o OUTPUT] [-p] [-w WORKERS] [--password PASSWORD] url
 
 Extract files from remote ZIP archives
 
@@ -20,13 +21,16 @@ positional arguments:
   url                   URL of the remote ZIP file
 
 options:
-  -h, --help                 show this help message and exit
-  -l, --list                 List files in the ZIP archive
-  -t, --tree                 Display zip contents in tree format
-  -e, --extract EXTRACT      Extract specific files from the ZIP archive (comma-separated)
-  -o, --output OUTPUT        Output directory for extracted files. Use "-" to write to stdout
-  -p, --parallel             Extract files in parallel
-  -w, --workers <n>          Maximum number of worker threads for parallel extraction
+  -h, --help            show this help message and exit
+  -l, --list            List files in the ZIP archive
+  -t, --tree            Display zip contents in tree format
+  -e, --extract EXTRACT
+                        Extract specific files from the ZIP archive
+  -o, --output OUTPUT   Output directory for extracted files. Use "-" to write to stdout
+  -p, --parallel        Extract files in parallel
+  -w, --workers WORKERS
+                        Maximum number of worker threads for parallel extraction
+  --password PASSWORD   Password for encrypted ZIP files
 ```
 
 #### To extract a single file
@@ -41,12 +45,15 @@ cloud_unzip -e path/to/file1,path/to/file2,path/to/file3 <url>
 ```
 ( use  `--parallel` to extract multiple files parallely , default extraction method is sequential )
 
+- If the ZIP file is `encrypted`, it will ask for a `password` during extraction, or it can be provided using the `--password <your password>` argument.
+
 
 ### Limitations 
 - Server must support range request
 <!--
 - only `Deflate` and `Store` methods are currently supported
 -->
+
 
 
 ### Use as module
