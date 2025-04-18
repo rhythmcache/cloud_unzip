@@ -43,10 +43,15 @@ cloud_unzip -e path/to/file/inside/zip <url>
 ```
 cloud_unzip -e path/to/file1,path/to/file2,path/to/file3 <url>
 ```
-( use  `--parallel` to extract multiple files parallely , default extraction method is sequential )
+---
+
+
+-  use  `--parallel` to extract multiple files parallely , default extraction method is sequential 
 
 - If the ZIP file is `encrypted`, it will ask for a `password` during extraction, or it can be provided using the `--password <your password>` argument.
 
+
+---
 
 ### Limitations 
 - Server must support range request
