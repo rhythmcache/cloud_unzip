@@ -4,7 +4,9 @@ import os
 import sys
 import concurrent.futures
 import getpass
-from typing import List, Optional, Union, BinaryIO
+import fnmatch
+import re
+from typing import List, Optional, Union, BinaryIO, Pattern
 
 def format_size(size_in_bytes):
     units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -17,6 +19,38 @@ def format_size(size_in_bytes):
         return f"{int(size)} {units[unit_index]}"
     else:
         return f"{size:.2f} {units[unit_index]}"
+
+def match_files(file_list: List[str], patterns: List[str], use_regex: bool = False) -> List[str]:
+    """
+    Match files using glob patterns or regex.
+    
+    Args:
+        file_list: List of file paths to match against
+        patterns: List of patterns to match
+        use_regex: If True, treat patterns as regex; otherwise use glob patterns
+    
+    Returns:
+        List of matching file paths
+    """
+    matched_files = set()
+    
+    for pattern in patterns:
+        if use_regex:
+            try:
+                regex_pattern = re.compile(pattern)
+                for file_path in file_list:
+                    if regex_pattern.search(file_path):
+                        matched_files.add(file_path)
+            except re.error as e:
+                print(f"Invalid regex pattern '{pattern}': {e}", file=sys.stderr)
+                continue
+        else:
+            # Use glob pattern matching
+            for file_path in file_list:
+                if fnmatch.fnmatch(file_path, pattern):
+                    matched_files.add(file_path)
+    
+    return sorted(list(matched_files))
 
 def print_zip_tree(files, zipfile_obj):
     structure = {}
@@ -107,12 +141,22 @@ class RemoteZipExtractor:
         """List all files in the ZIP archive."""
         return self.zipfile.namelist()
     
-    def extract_file(self, filename: str, output_path: Optional[str] = None) -> str:
+    def find_files(self, patterns: List[str], use_regex: bool = False) -> List[str]:
+        """Find files matching the given patterns."""
+        all_files = self.list_files()
+        return match_files(all_files, patterns, use_regex)
+    
+    def extract_file(self, filename: str, output_path: Optional[str] = None, flatten: bool = False) -> str:
         """Extract a specific file from the ZIP archive."""
         if output_path is None:
-            output_path = os.path.basename(filename)
+            if flatten:
+                output_path = os.path.basename(filename)
+            else:
+                output_path = filename
         
-        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        # only create directories if we're not flattening or if output_path has directories
+        if not flatten or os.path.dirname(output_path):
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         
         with self.fs.open(self.url) as remote_file:
             with zipfile.ZipFile(remote_file) as zf:
@@ -147,7 +191,7 @@ class RemoteZipExtractor:
         
         return output_path
     
-    def extract_files_parallel(self, filenames: List[str], output_dir: str, max_workers: int = None) -> List[str]:
+    def extract_files_parallel(self, filenames: List[str], output_dir: str, max_workers: int = None, flatten: bool = False) -> List[str]:
         """Extract multiple files in parallel."""
         missing_files = [f for f in filenames if f not in self.zipfile.namelist()]
         if missing_files:
@@ -156,11 +200,18 @@ class RemoteZipExtractor:
         output_paths = []
         
         def extract_file_wrapper(filename: str) -> str:
-            output_path = os.path.join(output_dir, filename)
-            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            if flatten:
+                output_path = os.path.join(output_dir, os.path.basename(filename))
+            else:
+                output_path = os.path.join(output_dir, filename)
+            
+            # only create directories if we're not flattening or if there are still directories in the path
+            if not flatten or os.path.dirname(os.path.relpath(output_path, output_dir)):
+                os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            
             print(f"Extracting '{filename}' to '{output_path}'...", file=sys.stderr)
             try:
-                result = self.extract_file(filename, output_path)
+                result = self.extract_file(filename, output_path, flatten=False)  # don't double-flatten
                 print(f"Successfully extracted '{filename}'", file=sys.stderr)
                 return result
             except Exception as e:
@@ -179,7 +230,7 @@ class RemoteZipExtractor:
         
         return output_paths
 
-def extract_file_from_remote_zip(url: str, filename: str, output_path: Optional[str] = None, to_stdout: bool = False, password: Optional[str] = None) -> Union[str, bytes]:
+def extract_file_from_remote_zip(url: str, filename: str, output_path: Optional[str] = None, to_stdout: bool = False, password: Optional[str] = None, flatten: bool = False) -> Union[str, bytes]:
     """Standalone function to extract a file from a remote ZIP archive."""
     fs = fsspec.filesystem("http")
     pwd_bytes = password.encode('utf-8') if password else None
@@ -192,9 +243,14 @@ def extract_file_from_remote_zip(url: str, filename: str, output_path: Optional[
                         return f.read()
                 else:
                     if output_path is None:
-                        output_path = os.path.basename(filename)
+                        if flatten:
+                            output_path = os.path.basename(filename)
+                        else:
+                            output_path = filename
                     
-                    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                    # only create directories if we're not flattening or if output_path has directories
+                    if not flatten or os.path.dirname(output_path):
+                        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
                     
                     info = zf.getinfo(filename)
                     total_size = info.file_size
@@ -220,7 +276,7 @@ def extract_file_from_remote_zip(url: str, filename: str, output_path: Optional[
             except RuntimeError as e:
                 if "password required" in str(e).lower() or "bad password" in str(e).lower():
                     actual_password = get_password(password)
-                    return extract_file_from_remote_zip(url, filename, output_path, to_stdout, actual_password)
+                    return extract_file_from_remote_zip(url, filename, output_path, to_stdout, actual_password, flatten)
                 else:
                     raise
 
@@ -230,10 +286,13 @@ def main():
     parser.add_argument('url', help='URL of the remote ZIP file')
     parser.add_argument('-l', '--list', action='store_true', help='List files in the ZIP archive')
     parser.add_argument('-t', '--tree', action='store_true', help='Display zip contents in tree format')
-    parser.add_argument('-e', '--extract', help='Extract specific files from the ZIP archive')
+    parser.add_argument('-e', '--extract', help='Extract specific files from the ZIP archive (supports glob patterns)')
+    parser.add_argument('-f', '--find', help='Find files matching patterns (supports glob patterns)')
+    parser.add_argument('-r', '--regex', action='store_true', help='Use regex patterns instead of glob patterns')
     parser.add_argument('-o', '--output', help='Output directory for extracted files. Use "-" to write to stdout')
     parser.add_argument('-p', '--parallel', action='store_true', help='Extract files in parallel')
     parser.add_argument('-w', '--workers', type=int, default=None, help='Maximum number of worker threads for parallel extraction')
+    parser.add_argument('--flatten', action='store_true', help='Extract files without preserving directory structure')
     parser.add_argument('--password', help='Password for encrypted ZIP files')
     args = parser.parse_args()
 
@@ -250,8 +309,33 @@ def main():
                 size_str = format_size(file_info.file_size)
                 print(f"  {file} ({size_str})", file=sys.stderr)
 
+    if args.find:
+        patterns = [p.strip() for p in args.find.split(',')]
+        matching_files = extractor.find_files(patterns, use_regex=args.regex)
+        
+        pattern_type = "regex" if args.regex else "glob"
+        print(f"Files matching {pattern_type} patterns ({len(matching_files)}):", file=sys.stderr)
+        for file in matching_files:
+            file_info = extractor.zipfile.getinfo(file)
+            size_str = format_size(file_info.file_size)
+            print(f"  {file} ({size_str})", file=sys.stderr)
+
     if args.extract:
-        files_to_extract = [f.strip() for f in args.extract.split(',')]
+        # check if we're dealing with patterns or explicit file names
+        input_patterns = [p.strip() for p in args.extract.split(',')]
+        
+        # if any pattern contains wildcards or we're in regex mode, treat as patterns
+        if args.regex or any('*' in p or '?' in p or '[' in p for p in input_patterns):
+            files_to_extract = extractor.find_files(input_patterns, use_regex=args.regex)
+            if not files_to_extract:
+                pattern_type = "regex" if args.regex else "glob"
+                print(f"No files found matching {pattern_type} patterns: {', '.join(input_patterns)}", file=sys.stderr)
+                sys.exit(1)
+            
+            pattern_type = "regex" if args.regex else "glob"
+            print(f"Found {len(files_to_extract)} files matching {pattern_type} patterns", file=sys.stderr)
+        else:
+            files_to_extract = input_patterns
         
         if args.output == '-':
             if len(files_to_extract) > 1:
@@ -264,13 +348,29 @@ def main():
             os.makedirs(output_dir, exist_ok=True)
             
             if args.parallel and len(files_to_extract) > 1:
-                extractor.extract_files_parallel(files_to_extract, output_dir, max_workers=args.workers)
+                extractor.extract_files_parallel(files_to_extract, output_dir, max_workers=args.workers, flatten=args.flatten)
             else:
                 for filename in files_to_extract:
-                    output_path = os.path.join(output_dir, filename)
-                    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                    if args.flatten:
+                        output_path = os.path.join(output_dir, os.path.basename(filename))
+                    else:
+                        output_path = os.path.join(output_dir, filename)
+                    
+                    # handle filename conflicts when flattening
+                    if args.flatten and os.path.exists(output_path):
+                        base, ext = os.path.splitext(os.path.basename(filename))
+                        counter = 1
+                        while os.path.exists(output_path):
+                            output_path = os.path.join(output_dir, f"{base}_{counter}{ext}")
+                            counter += 1
+                        print(f"Warning: File name conflict, renaming to '{os.path.basename(output_path)}'", file=sys.stderr)
+                    
+                    # only create directories if we're not flattening or if there are still directories in the path
+                    if not args.flatten or os.path.dirname(os.path.relpath(output_path, output_dir)):
+                        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                    
                     print(f"Extracting '{filename}' to '{output_path}'...", file=sys.stderr)
-                    extract_file_from_remote_zip(args.url, filename, output_path, password=args.password)
+                    extract_file_from_remote_zip(args.url, filename, output_path, password=args.password, flatten=args.flatten)
                     print(f"Successfully extracted '{filename}'", file=sys.stderr)
 
 if __name__ == "__main__":
