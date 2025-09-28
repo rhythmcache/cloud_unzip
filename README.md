@@ -13,7 +13,7 @@ pip install cloud_unzip
 ### Usage
 
 ```
-usage: cloud_unzip [-h] [-l] [-t] [-e EXTRACT] [-o OUTPUT] [-p] [-w WORKERS] [--password PASSWORD] url
+usage: cloud_unzip [-h] [-l] [-t] [-e EXTRACT] [-f FIND] [-r] [-o OUTPUT] [-p] [-w WORKERS] [--flatten] [--password PASSWORD] url
 
 Extract files from remote ZIP archives
 
@@ -24,12 +24,16 @@ options:
   -h, --help            show this help message and exit
   -l, --list            List files in the ZIP archive
   -t, --tree            Display zip contents in tree format
-  -e, --extract EXTRACT
-                        Extract specific files from the ZIP archive
-  -o, --output OUTPUT   Output directory for extracted files. Use "-" to write to stdout
+  -e EXTRACT, --extract EXTRACT
+                        Extract specific files from the ZIP archive (supports glob patterns)
+  -f FIND, --find FIND  Find files matching patterns (supports glob patterns)
+  -r, --regex           Use regex patterns instead of glob patterns
+  -o OUTPUT, --output OUTPUT
+                        Output directory for extracted files. Use "-" to write to stdout
   -p, --parallel        Extract files in parallel
-  -w, --workers WORKERS
+  -w WORKERS, --workers WORKERS
                         Maximum number of worker threads for parallel extraction
+  --flatten             Extract files without preserving directory structure
   --password PASSWORD   Password for encrypted ZIP files
 ```
 
